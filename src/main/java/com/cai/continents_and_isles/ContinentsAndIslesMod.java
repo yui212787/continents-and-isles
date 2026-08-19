@@ -85,6 +85,11 @@ public class ContinentsAndIslesMod {
                     ResourceLocation.fromNamespaceAndPath(MOD_ID, "island_lowland"),
                     () -> IslandLowland.CODEC.codec()
             );
+            event.register(
+                    Registries.DENSITY_FUNCTION_TYPE,
+                    ResourceLocation.fromNamespaceAndPath(MOD_ID, "archipelago_erosion_suppress"),
+                    () -> ArchipelagoErosionSuppress.CODEC.codec()
+            );
         }
         if (event.getRegistryKey().equals(Registries.BIOME_SOURCE)) {
             event.register(

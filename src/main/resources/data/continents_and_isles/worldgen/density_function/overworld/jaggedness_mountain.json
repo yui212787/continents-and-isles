@@ -10,25 +10,25 @@
           "type": "minecraft:add",
           "argument1": "continents_and_isles:overworld/jaggedness",
           "argument2": {
+              "type": "minecraft:mul",
+              "argument1": {
+                "type": "minecraft:cache_2d",
+                "argument": {
+                  "type": "continents_and_isles:mountain_sector",
+                  "radius": 4250
+                }
+              },
+              "argument2": 0.08
+            }
+          },
+          "argument2": {
             "type": "minecraft:mul",
             "argument1": {
               "type": "minecraft:cache_2d",
-              "argument": {
-                "type": "continents_and_isles:mountain_sector",
-                "radius": 4250
-              }
+              "argument": "continents_and_isles:overworld/ring_mountain"
             },
             "argument2": 0.12
           }
-        },
-        "argument2": {
-          "type": "minecraft:mul",
-          "argument1": {
-            "type": "minecraft:cache_2d",
-            "argument": "continents_and_isles:overworld/ring_mountain"
-          },
-          "argument2": 0.20
-        }
       },
       "argument2": {
         "type": "minecraft:mul",

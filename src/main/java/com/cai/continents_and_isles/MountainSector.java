@@ -76,7 +76,7 @@ public class MountainSector implements DensityFunction.SimpleFunction {
 
     @Override
     public double maxValue() {
-        return 1.0;
+        return 2.60;
     }
 
     @Override

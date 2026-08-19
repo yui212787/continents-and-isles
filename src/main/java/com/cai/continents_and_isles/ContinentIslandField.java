@@ -66,6 +66,10 @@ public final class ContinentIslandField {
     /** 六大固定扇区的整体旋转角（弧度）：每个世界随机、同一世界内恒定，群系与地形共用 */
     private static volatile double sectorRotation;
 
+    /** 世界种子混合值：initSectorRotation 时由世界种子派生，混入 hash → 所有噪声场/单元格哈希随世界种子变化。
+     *  否则不同种子会生成完全相同的群系/岛屿/湖泊图案（只有扇区角度在转）。 */
+    private static long worldSeedMix = 0L;
+
     /** 群岛扇区必生成的蘑菇岛单元格（由种子决定），坐标为 300 格单元网格索引 */
     public static long mushroomCellX;
     public static long mushroomCellZ;
@@ -104,6 +108,8 @@ public final class ContinentIslandField {
         h ^= h >>> 33;
         h *= 0xc4ceb9fe1a85ec53L;
         h ^= h >>> 33;
+        // 先设置世界种子混合值：后续 initLake/initMushroomCell 等内部调用的 hash() 也随种子变化
+        worldSeedMix = h;
         sectorRotation = (h & 0x7fffffffL) / (double) 0x7fffffffL * Math.PI * 2.0;
         initLake(seed);
         initMushroomCell(seed);
@@ -875,32 +881,20 @@ public final class ContinentIslandField {
     }
 
     /**
-     * 山脉扇区（扇区 0）的结构值（0~1）：群系源与 {@code MountainSector} 共用，保证群系与地形完全对齐。
+     * 山脉扇区（扇区 0）的结构值（≥0）：群系源与 {@code MountainSector} 共用，保证群系与地形完全对齐。
      * <p>
-     * WiFi 弧线地形：山脉从外（环山带 0.955R）向内（0.30R）逐条同心弧线排列——
+     * 层层递增的弧线山脉：从外（环山带 0.955R）向内（0.30R）逐条同心弧线排列——
      * <ul>
-     *   <li>8 条弧线，弧线是环向山脊（沿角度蜿蜒），相邻弧线之间是窄峡谷（最低约 0.30 ≈ 80 格）</li>
+     *   <li>8 条弧线，弧线是环向山脊（沿角度蜿蜒），相邻弧线之间是窄峡谷（谷底约 0.40）</li>
+     *   <li>高度层层递增：越靠环山带越高（内弧峰 ≈0.45 → 外弧峰 ≈1.15），层间高差明显</li>
+     *   <li>蜿蜒随外扩增强：内弧接近平直、外弧大幅蛇形弯曲 + 大尺度 S 弯，外弧是连续长脊</li>
      *   <li>每条弧线沿角度呈拱形：弧中心点最高，向两侧（扇区边缘）平滑递减</li>
-     *   <li>弧线越接近环山带越高：外弧峰值约 0.95、内弧峰值约 0.50（最高不超过环山带抬升）</li>
-     *   <li>弧线径向是宽缓坡（圆润山脊）、峡谷窄；顶部叠加细节噪声 → 峰谷起伏，不是平顶</li>
+     *   <li>阳坡/阴坡不对称：脊顶偏向环山带一侧，内侧（朝中心）为阳坡缓而长、外侧（朝环山带）为阴坡陡而短，两侧都平滑递减到谷底无断崖</li>
+     *   <li>弧线径向是宽缓坡（外弧脊更宽更长）、峡谷窄；顶部叠加细节噪声 → 峰谷起伏，不是平顶</li>
      *   <li>中心（最内层弧线内侧）由深湖占据（湖盆降为 0，配合 DeepLakeSuppress/LakeBasin）</li>
      * </ul>
      */
     public static double mountainValue(double x, double z, double radius) {
-        // 角度差（含蜿蜒）
-        double angle = Math.atan2(z, x);
-        double warp = (valueNoise(x, z, 420, 4001) - 0.5) * 2.0 * 0.18;
-        double center = sectorCenterAngle(0);
-        double delta = Math.abs(Math.atan2(Math.sin(angle + warp - center), Math.cos(angle + warp - center)));
-        double half = Math.toRadians(sectorHalfWidthDeg);
-        // 拱形角度 mask：弧中心点（角度中心）最高，向两侧平滑递减，边缘归零（缓坡过渡）
-        double outer = half * 1.45;
-        double angArch = 1.0 - Mth.smoothstep((float) Mth.clamp(delta / outer, 0.0, 1.0));
-        if (angArch <= 0.0) {
-            return 0.0;
-        }
-        double angMask = angArch * angArch; // 平方让中心更突出（点最高，两边小）
-
         // 径向范围：0.30R（内）~ 0.955R（环山带），与环山带相接形成过渡
         double dist = Math.sqrt(x * x + z * z);
         double rLo = radius * 0.30;
@@ -910,26 +904,55 @@ public final class ContinentIslandField {
         }
         double rn = Mth.clamp((dist - rLo) / (rHi - rLo), 0.0, 1.0); // 0=内 1=外
 
-        // 更多弧线（8 条），角度噪声让弧线蜿蜒
-        double wobble = (valueNoise(x, z, 300, 4005) - 0.5) * 0.20;
-        double n = 8.0;
-        double phase = rn * n + wobble;
-        double seg = phase - Mth.floor(phase); // 0~1（当前弧线段内位置）
-        double arcShape = 0.5 - 0.5 * Math.cos(seg * Math.PI * 2.0); // 0~1，脊在段中部
-        // 脊宽谷窄：弧线是宽缓坡的圆润山脊，峡谷收窄（谷底 V 形）
-        double ridge = 1.0 - (1.0 - arcShape) * (1.0 - arcShape);
+        // 角度差：蜿蜒随外扩增强 → 越靠环山带的山脉越弯
+        // 内弧接近平直（±0.10 rad），外弧大幅蛇形弯曲（±0.40 rad）+ 小尺度边缘锯齿
+        double warpAmp = 0.10 + 0.30 * rn;
+        double warpBig = (valueNoise(x, z, 420, 4001) - 0.5) * 2.0 * warpAmp;
+        double warpSmall = (valueNoise(x, z, 110, 4011) - 0.5) * 2.0 * (0.03 + 0.06 * rn);
+        double angle = Math.atan2(z, x);
+        double center = sectorCenterAngle(0);
+        double delta = Math.abs(Math.atan2(Math.sin(angle + warpBig + warpSmall - center), Math.cos(angle + warpBig + warpSmall - center)));
+        double half = Math.toRadians(sectorHalfWidthDeg);
+        // 拱形角度 mask：弧中心点（角度中心）最高，向两侧平滑递减，边缘归零（缓坡过渡）
+        double outer = half * 1.55;
+        double angArch = 1.0 - Mth.smoothstep((float) Mth.clamp(delta / outer, 0.0, 1.0));
+        if (angArch <= 0.0) {
+            return 0.0;
+        }
+        double angMask = angArch * angArch; // 平方让中心更突出（点最高，两边小）
 
-        // 弧线峰值：越接近环山带（rn 大）越高
+        // 弧线径向蜿蜒随外扩增强：短波蛇形 + 大尺度 S 弯（外弧形成连续蜿蜒的长脊）
+        double wobbleAmp = 0.05 + 0.20 * rn;
+        double wobble = (valueNoise(x, z, 300, 4005) - 0.5) * 2.0 * wobbleAmp;
+        double wobbleLong = (valueNoise(x, z, 900, 4010) - 0.5) * 2.0 * (0.04 + 0.18 * rn);
+        double n = 8.0;
+        double phase = rn * n + wobble + wobbleLong;
+        double seg = phase - Mth.floor(phase); // 0~1（当前弧线段内位置）
+        // 阳坡/阴坡不对称：脊顶偏向环山带一侧（seg≈0.62）
+        // 内侧 0~0.62 为阳坡（朝大陆中心，缓而长），外侧 0.62~1.0 为阴坡（朝环山带，陡而短），
+        // 两侧余弦平滑 → 谷底与脊顶斜率都连续，无断崖
+        double segC = 0.62;
+        double asym = seg < segC
+            ? 0.5 * (seg / segC)
+            : 0.5 + 0.5 * ((seg - segC) / (1.0 - segC));
+        double arcShape = 0.5 - 0.5 * Math.cos(asym * Math.PI * 2.0); // 0~1，脊顶在 seg=segC
+        // 脊宽谷窄：外层弧脊更宽更长（指数随外扩增大），峡谷收窄（谷底 V 形）
+        double ridge = 1.0 - Math.pow(1.0 - arcShape, 1.2 + 0.8 * rn);
+
+        // 弧线峰值：越接近环山带越高，层层递增（层间高差更明显）
         double i = Mth.floor(phase);
         double rnCenter = Mth.clamp((i + 0.5) / n, 0.0, 1.0);
-        double peak = 0.45 + 0.55 * rnCenter; // 外弧≈0.95、内弧≈0.50
+        double peak = 0.40 + 0.75 * rnCenter; // 外弧≈1.15、内弧≈0.45
 
-        // 弧线顶部细节：中尺度噪声让山脊有峰谷（不是平滑平顶）
-        double detail = (valueNoise(x, z, 120, 4006) - 0.5) * 0.30 * ridge;
+        // 弧线顶部细节：让山脊有峰谷（不是平滑平顶），幅度略低于层间高差
+        double detail = (valueNoise(x, z, 120, 4006) - 0.5) * 0.28 * ridge;
+        double detail2 = (valueNoise(x, z, 40, 4007) - 0.5) * 0.10 * ridge;
 
-        // 高度 = 峡谷底(0.30≈80格) + 弧线提升 + 细节起伏
-        double m = 0.30 + ridge * peak * 0.70 + detail;
-        return Math.max(0.0, Math.min(1.0, m * angMask));
+        // 高度 = 峡谷底 + 弧线大幅提升 + 细节起伏
+        // 峰值 ~2.47 ×0.32（换算 Y ≈ 128 + 128×offset → 最外弧 ≈258、最内弧 ≈207）
+        double m = 0.40 + ridge * peak * 1.70 + detail + detail2;
+        // 不平顶、不硬限高：只乘 angMask 控制横向衰减，不做 min/max 裁剪
+        return Math.max(0.0, m * angMask);
     }
 
     /**
@@ -992,9 +1015,9 @@ public final class ContinentIslandField {
         return Mth.lerp(sz, Mth.lerp(sx, h00, h10), Mth.lerp(sx, h01, h11));
     }
 
-    /** 确定性哈希，输出 0~1 */
+    /** 确定性哈希，输出 0~1（混入世界种子，不同种子图案不同） */
     public static double hash(long x, long z, int seed) {
-        long h = x * 341873128712L + z * 132897987541L + seed * 9029L;
+        long h = x * 341873128712L + z * 132897987541L + seed * 9029L + worldSeedMix;
         h = (h ^ (h >>> 16)) * 0x45d9f3bL;
         h = (h ^ (h >>> 16)) * 0x45d9f3bL;
         h ^= h >>> 16;
