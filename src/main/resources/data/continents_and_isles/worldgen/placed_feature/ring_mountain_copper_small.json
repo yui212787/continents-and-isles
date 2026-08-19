@@ -1,0 +1,27 @@
+﻿{
+    "feature":  "continents_and_isles:ring_mountain_copper_small",
+    "placement":  [
+                      {
+                          "count":  6,
+                          "type":  "minecraft:count"
+                      },
+                      {
+                          "type":  "minecraft:in_square"
+                      },
+                      {
+                          "height":  {
+                                         "min_inclusive":  {
+                                                               "absolute":  20
+                                                           },
+                                         "type":  "minecraft:trapezoid",
+                                         "max_inclusive":  {
+                                                               "absolute":  200
+                                                           }
+                                     },
+                          "type":  "minecraft:height_range"
+                      },
+                      {
+                          "type":  "minecraft:biome"
+                      }
+                  ]
+}

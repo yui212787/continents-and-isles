@@ -1,0 +1,98 @@
+{
+  "dimensions": {
+    "minecraft:overworld": {
+      "type": "minecraft:overworld",
+      "generator": {
+        "type": "minecraft:noise",
+        "biome_source": {
+          "type": "continents_and_isles:continents_and_isles",
+          "delegate": {
+            "type": "minecraft:multi_noise",
+            "preset": "minecraft:overworld"
+          },
+          "radius": 4250,
+          "transition": 600,
+          "grid": 400,
+          "island_chance": 0.32,
+          "island_biomes": [
+            "minecraft:plains",
+            "minecraft:forest",
+            "minecraft:birch_forest",
+            "minecraft:dark_forest",
+            "minecraft:taiga",
+            "minecraft:jungle",
+            "minecraft:desert",
+            "minecraft:savanna",
+            "minecraft:badlands",
+            "minecraft:windswept_hills",
+            "minecraft:meadow",
+            "minecraft:cherry_grove",
+            "minecraft:swamp",
+            "minecraft:mushroom_fields"
+          ],
+          "mainland_biomes": [
+            "minecraft:stony_peaks",
+            "minecraft:jagged_peaks",
+            "minecraft:snowy_slopes",
+            "minecraft:desert",
+            "minecraft:jungle",
+            "minecraft:snowy_plains",
+            "minecraft:swamp",
+            "minecraft:savanna",
+            "minecraft:taiga",
+            "minecraft:plains",
+            "minecraft:forest",
+            "minecraft:birch_forest",
+            "minecraft:dark_forest",
+            "minecraft:meadow",
+            "minecraft:flower_forest",
+            "minecraft:sunflower_plains",
+            "minecraft:bamboo_jungle",
+            "minecraft:mangrove_swamp",
+            "minecraft:stony_shore",
+            "minecraft:warm_ocean",
+            "minecraft:lukewarm_ocean",
+            "minecraft:cold_ocean",
+            "minecraft:frozen_ocean",
+            "minecraft:cherry_grove",
+            "minecraft:mushroom_fields",
+            "minecraft:ocean",
+            "minecraft:frozen_peaks",
+            "minecraft:beach",
+            "minecraft:snowy_beach",
+            "minecraft:badlands",
+            "minecraft:wooded_badlands",
+            "minecraft:eroded_badlands",
+            "minecraft:deep_ocean",
+            "minecraft:river",
+            "minecraft:old_growth_birch_forest",
+            "minecraft:old_growth_pine_taiga",
+            "minecraft:old_growth_spruce_taiga"
+          ]
+        },
+        "settings": "continents_and_isles:overworld"
+      }
+    },
+    "minecraft:the_end": {
+      "type": "minecraft:the_end",
+      "generator": {
+        "type": "minecraft:noise",
+        "biome_source": {
+          "type": "minecraft:the_end"
+        },
+        "settings": "minecraft:end"
+      }
+    },
+    "minecraft:the_nether": {
+      "type": "minecraft:the_nether",
+      "generator": {
+        "type": "minecraft:noise",
+        "biome_source": {
+          "type": "minecraft:multi_noise",
+          "preset": "minecraft:nether"
+        },
+        "settings": "minecraft:nether"
+      }
+    }
+  }
+}

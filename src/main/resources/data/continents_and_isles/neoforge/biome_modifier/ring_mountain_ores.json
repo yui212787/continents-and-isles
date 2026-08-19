@@ -1,0 +1,28 @@
+{
+  "type": "neoforge:add_features",
+  "biomes": "#minecraft:is_mountain",
+  "features": [
+    "continents_and_isles:ring_mountain_diamond_large",
+    "continents_and_isles:ring_mountain_diamond_medium",
+    "continents_and_isles:ring_mountain_diamond_small",
+    "continents_and_isles:ring_mountain_gold_large",
+    "continents_and_isles:ring_mountain_gold_medium",
+    "continents_and_isles:ring_mountain_gold_small",
+    "continents_and_isles:ring_mountain_redstone_large",
+    "continents_and_isles:ring_mountain_redstone_medium",
+    "continents_and_isles:ring_mountain_redstone_small",
+    "continents_and_isles:ring_mountain_iron_large",
+    "continents_and_isles:ring_mountain_iron_medium",
+    "continents_and_isles:ring_mountain_iron_small",
+    "continents_and_isles:ring_mountain_copper_large",
+    "continents_and_isles:ring_mountain_copper_medium",
+    "continents_and_isles:ring_mountain_copper_small",
+    "continents_and_isles:ring_mountain_coal_large",
+    "continents_and_isles:ring_mountain_coal_medium",
+    "continents_and_isles:ring_mountain_coal_small",
+    "continents_and_isles:ring_mountain_lapis_large",
+    "continents_and_isles:ring_mountain_lapis_medium",
+    "continents_and_isles:ring_mountain_lapis_small"
+  ],
+  "step": "underground_ores"
+}

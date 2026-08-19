@@ -1,0 +1,7 @@
+{
+  "type": "continents_and_isles:swamp_hut",
+  "biomes": "#minecraft:has_structure/swamp_hut",
+  "step": "surface_structures",
+  "terrain_adaptation": "beard_thin",
+  "spawn_overrides": {}
+}

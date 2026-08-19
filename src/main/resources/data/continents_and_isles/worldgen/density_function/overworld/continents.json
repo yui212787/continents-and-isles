@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:flat_cache",
+  "argument": {
+    "type": "continents_and_isles:radial_land",
+    "base": "minecraft:overworld/continents",
+    "radius": 4250,
+    "transition": 600,
+    "grid": 400,
+    "island_chance": 0.22
+  }
+}

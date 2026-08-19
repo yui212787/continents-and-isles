@@ -1,0 +1,14 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "spacing": 1,
+    "separation": 0,
+    "salt": 10387319
+  },
+  "structures": [
+    {
+      "structure": "continents_and_isles:woodland_mansion",
+      "weight": 1
+    }
+  ]
+}

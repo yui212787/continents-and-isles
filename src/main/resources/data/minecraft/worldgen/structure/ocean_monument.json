@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:ocean_monument",
+  "biomes": "#continents_and_isles:none",
+  "step": "surface_structures",
+  "terrain_adaptation": "none",
+  "spawn_overrides": {}
+}

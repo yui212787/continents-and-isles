@@ -1,0 +1,14 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "spacing": 1,
+    "separation": 0,
+    "salt": 10387313
+  },
+  "structures": [
+    {
+      "structure": "continents_and_isles:ocean_monument",
+      "weight": 1
+    }
+  ]
+}
