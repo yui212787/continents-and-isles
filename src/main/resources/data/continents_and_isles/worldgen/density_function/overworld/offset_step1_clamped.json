@@ -1,0 +1,9 @@
+{
+  "type": "minecraft:clamp",
+  "input": {
+    "type": "minecraft:cache_2d",
+    "argument": "continents_and_isles:overworld/offset_step1"
+  },
+  "min": -0.50,
+  "max": -0.46875
+}

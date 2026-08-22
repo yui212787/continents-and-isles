@@ -1,0 +1,4 @@
+{
+  "type": "continents_and_isles:archipelago_wetland",
+  "base": "continents_and_isles:overworld/offset_before_archipelago"
+}

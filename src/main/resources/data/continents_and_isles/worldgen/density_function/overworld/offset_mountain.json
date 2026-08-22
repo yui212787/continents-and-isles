@@ -1,75 +1,20 @@
 {
   "type": "minecraft:flat_cache",
   "argument": {
-    "type": "minecraft:cache_2d",
-    "argument": {
-      "type": "minecraft:add",
+    "type": "minecraft:add",
+    "argument1": "continents_and_isles:overworld/offset_step1",
+    "argument2": {
+      "type": "minecraft:mul",
       "argument1": {
         "type": "minecraft:add",
-        "argument1": {
-            "type": "minecraft:add",
-            "argument1": "continents_and_isles:overworld/offset",
-            "argument2": {
-              "type": "minecraft:mul",
-              "argument1": {
-                "type": "minecraft:cache_2d",
-                "argument": "continents_and_isles:overworld/island_lowland"
-              },
-              "argument2": {
-                "type": "minecraft:mul",
-                "argument1": {
-                  "type": "minecraft:cache_2d",
-                  "argument": "continents_and_isles:overworld/deep_lake_suppress"
-                },
-                "argument2": {
-                  "type": "minecraft:mul",
-                  "argument1": {
-                    "type": "minecraft:cache_2d",
-                    "argument": {
-                      "type": "continents_and_isles:mountain_sector",
-                      "radius": 4250
-                    }
-                  },
-                  "argument2": 0.32
-                }
-              }
-            }
-          },
-          "argument2": {
-            "type": "minecraft:mul",
-            "argument1": {
-              "type": "minecraft:cache_2d",
-              "argument": "continents_and_isles:overworld/island_lowland"
-            },
-            "argument2": {
-              "type": "minecraft:mul",
-              "argument1": {
-                "type": "minecraft:cache_2d",
-                "argument": "continents_and_isles:overworld/ring_mountain"
-              },
-              "argument2": 0.72
-            }
-          }
-      },
-      "argument2": {
-        "type": "minecraft:add",
-        "argument1": {
+        "argument1": "continents_and_isles:overworld/offset_step1_clamped",
+        "argument2": {
           "type": "minecraft:mul",
-          "argument1": {
-            "type": "minecraft:cache_2d",
-            "argument": "continents_and_isles:overworld/deep_lake_suppress"
-          },
-          "argument2": {
-            "type": "minecraft:mul",
-            "argument1": {
-              "type": "minecraft:cache_2d",
-              "argument": "continents_and_isles:overworld/tianchi_mountain"
-            },
-            "argument2": 0.30
-          }
-        },
-        "argument2": "continents_and_isles:overworld/lake_basin"
-      }
+          "argument1": -1.0,
+          "argument2": "continents_and_isles:overworld/offset_step1"
+        }
+      },
+      "argument2": "continents_and_isles:overworld/archipelago_transition"
     }
   }
 }

@@ -14,7 +14,8 @@ import net.minecraft.world.level.levelgen.DensityFunction;
  *   <li>水面以上或非深湖：返回 0 → 不影响原始密度</li>
  * </ul>
  * <p>
- * 湖底是平滑碗形（边缘 4.5 格深 → 中心 20 格深），挖空严格限制在 Y63 水面以下，
+ * 湖底是平滑碗形（湖岸浅 → 湖心 20 格深，最深处 Y43；实际岸边水深由 LakeBasin 抬高的
+ * 湖盆地面决定 ≈5.4 格），挖空严格限制在 Y63 水面以下，
  * 配合 LakeBasin 把湖盆地面抬到海平面附近——整个挖空区域都在水下，无水空洞、无垂直断崖。
  * 性能优化：先做距离平方检查（dd2 >= 1.0），大部分方块直接返回 0。
  */
@@ -30,6 +31,7 @@ public class DeepLake implements DensityFunction.SimpleFunction {
 
     @Override
     public double compute(DensityFunction.FunctionContext context) {
+        ContinentIslandField.ensureConfigLoaded();
         int x = context.blockX();
         int y = context.blockY();
         int z = context.blockZ();

@@ -23,6 +23,7 @@ public class DeepLakeSuppress implements DensityFunction.SimpleFunction {
 
     @Override
     public double compute(DensityFunction.FunctionContext context) {
+        ContinentIslandField.ensureConfigLoaded();
         int x = context.blockX();
         int z = context.blockZ();
         double best = 1.0;

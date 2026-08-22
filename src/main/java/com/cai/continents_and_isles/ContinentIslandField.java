@@ -16,6 +16,9 @@ import net.minecraft.util.Mth;
  */
 public final class ContinentIslandField {
 
+    /** 诊断日志（扇区方位、湿地带采样等） */
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(ContinentIslandField.class);
+
     /** bias 达到该值时按陆地处理（群系层面与海岸线判定） */
     public static final double LAND_BIAS_THRESHOLD = -0.12;
 
@@ -43,25 +46,33 @@ public final class ContinentIslandField {
 
     /** 大陆半径（格），由配置加载，供 DeepLake 等共享 */
     public static int continentRadius = 4250;
+    /** 超大陆 → 海洋过渡带宽（格），默认 600；配置可覆盖 */
+    public static int continentTransition = 160;
+    /** 外围岛屿生成网格（格），默认 400；配置可覆盖 */
+    public static int continentGrid = 400;
+    /** 外围岛屿概率（每个网格单元），默认 0.22；配置可覆盖 */
+    public static double continentIslandChance = 0.35;
 
     /** 固定扇区参数：半宽（度）、环带内/外径比例，由配置加载 */
     public static double sectorHalfWidthDeg = 20.0;
+    /** 群岛扇区额外半宽（度）：仅在群岛扇区角度判定上追加，向两侧扩大内海/小岛/压低带/湿地带，其他扇区不变 */
+    public static double islandSectorHalfExtraDeg = 5.0;
     public static double sectorDistLo = 0.30;
-    public static double sectorDistHi = 0.82;
+    public static double sectorDistHi = 0.85;
 
     /** 群岛扇区索引（原沼泽位置，扇区 2）：内海 + 小岛 */
     public static final int ISLAND_SECTOR = 2;
 
-    /** 边缘环山开关（默认关闭），由配置加载 */
-    public static boolean ringMountainEnabled = false;
+    /** 边缘环山开关（默认开启，与 CAIConfig 默认一致），由配置加载 */
+    public static boolean ringMountainEnabled = true;
 
     /** 三个大湖是否启用（与 lakeType/lakeCX 等索引一一对应），由配置加载 */
     public static final boolean[] lakeEnabled = new boolean[LAKE_COUNT];
 
     /** 远海区起点（按超大陆半径倍数），超过此距离后岛屿生成使用单独倍率 */
-    public static double farIslandStartMul = 3.0;
+    public static double farIslandStartMul = 2.5;
     /** 远海区岛屿生成概率倍率（0 则远海无岛，>1 则远海更多） */
-    public static double farIslandMul = 1.0;
+    public static double farIslandMul = 1.35;
 
     /** 六大固定扇区的整体旋转角（弧度）：每个世界随机、同一世界内恒定，群系与地形共用 */
     private static volatile double sectorRotation;
@@ -116,6 +127,13 @@ public final class ContinentIslandField {
         initMonument(seed);
         initDesertPyramid(seed);
         initWoodlandMansion(seed);
+        initWetlandSwampHut(seed);
+        // 诊断日志：输出扇区方位，便于在游戏内核对群岛扇区（2）方向与湿地位置
+        LOGGER.info("initSectorRotation: seed={}, sectorRotation={} rad ({}°), 群岛中心角={}°",
+            seed,
+            String.format(java.util.Locale.ROOT, "%.4f", sectorRotation),
+            String.format(java.util.Locale.ROOT, "%.1f", Math.toDegrees(sectorRotation)),
+            String.format(java.util.Locale.ROOT, "%.1f", Math.toDegrees(sectorCenterAngle(ISLAND_SECTOR))));
     }
 
     /** 由世界种子在群岛扇区中心附近指定一个单元格为必生成蘑菇岛 */
@@ -196,8 +214,7 @@ public final class ContinentIslandField {
             }
         }
         // 校验保留区中心仍在群岛斑块 mask 高值区（否则地形不会深海化），回退锚点单元
-        Config cfg = new Config(continentRadius, 600, 400, 0.22);
-        if (islandSectorMask(cx, cz, cfg) < 0.25) {
+        if (islandSectorMask(cx, cz, continentRadius) < 0.25) {
             cellX = baseX;
             cellZ = baseZ;
             cx = (cellX + 0.5) * 300.0;
@@ -305,7 +322,6 @@ public final class ContinentIslandField {
      */
     private static void initWoodlandMansion(long seed) {
         double R = continentRadius;
-        Config cfg = new Config(continentRadius, 600, 400, 0.22);
         double px = 0, pz = 0;
         boolean ok = false;
         for (int attempt = 0; attempt < 16 && !ok; attempt++) {
@@ -316,7 +332,7 @@ public final class ContinentIslandField {
             // 避开所有扇区核心：任一扇区 mask >= 0.40 即弃（保留在山脉/群岛/雪原等扇区内会破坏其群系）
             double best = 0.0;
             for (int s = 0; s < 6; s++) {
-                best = Math.max(best, sectorMask(s, tx, tz, cfg));
+                best = Math.max(best, sectorMask(s, tx, tz, R));
             }
             if (best >= 0.40) continue;
             // 避开三个湖（含 80 格缓冲）
@@ -357,6 +373,54 @@ public final class ContinentIslandField {
     /** 林地府邸中心 block 坐标（群系源强制黑森林用），未初始化返回 0 */
     public static double mansionCenterZ() {
         return mansionZ;
+    }
+
+    /** 湿地带保底女巫小屋的中心 chunk 坐标（由种子在湿地带内选定） */
+    private static int wetlandSwampHutChunkX;
+    private static int wetlandSwampHutChunkZ;
+    private static boolean wetlandSwampHutInitialized = false;
+
+    /**
+     * 由世界种子在群岛-环山带过渡湿地带（0.80R~0.98R × 群岛扇区角度）内选定一个保底女巫小屋位置：
+     * 以群岛扇区中心角为基准，种子哈希角度偏移 ±15°、半径 0.82R~0.96R，
+     * 并校验该点 {@link #archipelagoWetlandBand} ≥ 0.5（湿地带主体区，群系必为沼泽/红树林，
+     * 满足 has_structure/swamp_hut 标签）；校验失败则重试，最多 8 次后回退湿地带中心（0.89R 中心角）。
+     * <p>
+     * 这是"保底至少一个"的定点结构：除它之外，原版 swamp_huts 结构集仍可在其他沼泽群系
+     * 中按原版规则继续生成，不限制数量。
+     */
+    private static void initWetlandSwampHut(long seed) {
+        double R = continentRadius;
+        double centerAng = sectorCenterAngle(ISLAND_SECTOR);
+        double px = 0, pz = 0;
+        boolean ok = false;
+        for (int attempt = 0; attempt < 8 && !ok; attempt++) {
+            double angOff = (hash(seed, attempt, 8831) - 0.5) * 2.0 * Math.toRadians(15.0);
+            double rr = 0.82 + hash(seed, attempt + 50, 8832) * 0.14;
+            double tx = Math.cos(centerAng + angOff) * rr * R;
+            double tz = Math.sin(centerAng + angOff) * rr * R;
+            // 必须落在湿地带主体区（band ≥ 0.5 → 群系 100% 为沼泽/红树林）
+            if (archipelagoWetlandBand(tx, tz, R) >= 0.5) {
+                px = tx;
+                pz = tz;
+                ok = true;
+            }
+        }
+        if (!ok) { // 兜底：湿地带中心（群岛扇区中心角 0.89R）
+            px = Math.cos(centerAng) * 0.89 * R;
+            pz = Math.sin(centerAng) * 0.89 * R;
+        }
+        wetlandSwampHutChunkX = (int) Mth.lfloor(px / 16.0);
+        wetlandSwampHutChunkZ = (int) Mth.lfloor(pz / 16.0);
+        wetlandSwampHutInitialized = true;
+    }
+
+    /** 湿地带保底女巫小屋的中心 chunk 位置（structure_set spacing=1 时必被判定），未初始化返回 null */
+    public static net.minecraft.world.level.ChunkPos wetlandSwampHutChunkPos() {
+        if (!wetlandSwampHutInitialized) {
+            return null;
+        }
+        return new net.minecraft.world.level.ChunkPos(wetlandSwampHutChunkX, wetlandSwampHutChunkZ);
     }
 
     /**
@@ -461,11 +525,43 @@ public final class ContinentIslandField {
         return sectorRotation;
     }
 
+    /** 【双保险】在每个密度函数 compute() / 群系 getNoiseBiome() 首次调用前尝试同步配置。
+     *  <p>ServerAboutToStart.loadConfig() 理论上更早触发，但如果 Mod 加载链路、
+     *  客户端创建世界时序有差异，至少在第一次坐标计算时兜底读一遍 CAIConfig。
+     *  配置文件此时必然已加载（能 compute 就意味着世界已存在），所以直接 .get() 安全。 */
+    public static void ensureConfigLoaded() {
+        try {
+            int r = CAIConfig.RADIUS.get();
+            if (r > 0 && r != continentRadius) {
+                continentRadius = r;
+                continentTransition = CAIConfig.TRANSITION.get();
+                continentGrid = CAIConfig.GRID.get();
+                continentIslandChance = CAIConfig.ISLAND_CHANCE.get();
+                lakeCenterFraction = CAIConfig.LAKE_CENTER_FRACTION.get();
+                sectorHalfWidthDeg = CAIConfig.SECTOR_HALF_WIDTH.get();
+                islandSectorHalfExtraDeg = CAIConfig.ISLAND_SECTOR_EXTRA_DEG.get();
+                sectorDistLo = CAIConfig.SECTOR_DIST_LO.get();
+                sectorDistHi = CAIConfig.SECTOR_DIST_HI.get();
+                ringMountainEnabled = CAIConfig.RING_MOUNTAIN_ENABLED.get();
+                lakeEnabled[0] = Boolean.TRUE.equals(CAIConfig.LAKE_0_ENABLED.get());
+                lakeEnabled[1] = Boolean.TRUE.equals(CAIConfig.LAKE_1_ENABLED.get());
+                lakeEnabled[2] = Boolean.TRUE.equals(CAIConfig.LAKE_2_ENABLED.get());
+                farIslandStartMul = CAIConfig.FAR_ISLAND_START_MULTIPLIER.get();
+                farIslandMul = CAIConfig.FAR_ISLAND_CHANCE_MULTIPLIER.get();
+            }
+        } catch (Exception ignored) {
+            // 极端情况（注册表测试、单元测试环境）：CAIConfig 未初始化则保留硬编码默认，不崩溃。
+        }
+    }
     /** 从 NeoForge 配置刷新大湖与扇区参数（在世界生成开始前调用） */
     public static void loadConfig() {
         continentRadius = CAIConfig.RADIUS.get();
+        continentTransition = CAIConfig.TRANSITION.get();
+        continentGrid = CAIConfig.GRID.get();
+        continentIslandChance = CAIConfig.ISLAND_CHANCE.get();
         lakeCenterFraction = CAIConfig.LAKE_CENTER_FRACTION.get();
         sectorHalfWidthDeg = CAIConfig.SECTOR_HALF_WIDTH.get();
+        islandSectorHalfExtraDeg = CAIConfig.ISLAND_SECTOR_EXTRA_DEG.get();
         sectorDistLo = CAIConfig.SECTOR_DIST_LO.get();
         sectorDistHi = CAIConfig.SECTOR_DIST_HI.get();
         ringMountainEnabled = CAIConfig.RING_MOUNTAIN_ENABLED.get();
@@ -518,26 +614,25 @@ public final class ContinentIslandField {
             //   falloff=0.05~0.40：过渡带，base → -0.65 平滑变化（空间≈80~150格宽）
             //   falloff>0.40：群岛主体，按 mask 决定内海/小岛值
             // 沙滩完全交给原版多噪声群系源自主生成，这里只做地形连续不制造台阶。
+            // 两侧海岸：完全不做人工干预，由 angMask 的角度硬截止（20°外为0）+ 原版大陆基盘
+            // 自然形成标准 MC 海岸线，不添加人工悬崖、人工礁石，也不做侧向下沉。
             double islMask = islandSectorMask(x, z, cfg);
             double islExt = islandSectorFalloff(x, z, cfg);
             if (islExt > 0.05) {
                 // 过渡期权重：falloff 0.05 → 0（陆地），falloff 0.40 → 1（海洋）
                 double extW = Mth.smoothstep((float) Mth.clamp((islExt - 0.05) / 0.35, 0.0, 1.0));
                 if (islExt <= 0.40) {
-                    // ===== 过渡带：纯 falloff 驱动，无任何 mask 判断，绝对连续无跳变 =====
-                    double val = Mth.lerp(extW, base, -0.65);
-                    // 过渡带河网：水域侧加深细窄河道（用户要求：多细河不要宽河）
-                    double trans = islandTransitionWeight(x, z, cfg);
-                    if (trans > 0.02) {
-                        double river = islandTransitionRiver(x, z);
-                        val = Mth.lerp(river * trans, val, -0.85);
-                    }
-                    return val;
+                    // ===== 过渡带：纯 falloff 线性过渡，无侵蚀/河网，直接 base → -0.65 =====
+                    return Mth.lerp(extW, base, -0.65);
                 }
                 // 群岛主体（falloff > 0.40）：内海 + 小岛
                 // 内海固定 -0.65；mask 0.45+ 才向岛屿值回升（岸边直接入海，无突兀）
                 double islVal = islandSectorValue(x, z);
-                double w2 = Mth.smoothstep((float) Mth.clamp((islMask - 0.45) / 0.40, 0.0, 1.0));
+                // 离岸缓冲环：islExt <= 0.20 时不允许小岛回升（w2=0），
+                // 保证岛与沙滩（末端0.10）之间至少有约60格纯净海面缓冲，不相融不贴岸
+                double w2 = (islExt > 0.20)
+                    ? Mth.smoothstep((float) Mth.clamp((islMask - 0.45) / 0.40, 0.0, 1.0))
+                    : 0.0;
                 return (w2 > 0.0) ? Mth.lerp(w2, -0.65, islVal) : -0.65;
             }
             return base;
@@ -559,21 +654,43 @@ public final class ContinentIslandField {
             radiusScale = 0.85 + 0.40 * farIslandMul; // 0.85x（远海为 0 时不使用） ~ 2.05x
         }
         double effectiveChance = Mth.clamp(baseChance, 0.0, 1.0);
-        long cx = Mth.lfloor(x / cfg.grid());
-        long cz = Mth.lfloor(z / cfg.grid());
-        if (effectiveChance > 0.0 && hash(cx, cz, 303) < effectiveChance) {
-            double ox = (cx + 0.5 + (hash(cx, cz, 404) - 0.5) * 0.30) * cfg.grid();
-            double oz = (cz + 0.5 + (hash(cx, cz, 505) - 0.5) * 0.30) * cfg.grid();
-            double r = cfg.grid() * (0.38 + 0.18 * hash(cx, cz, 606)) * radiusScale;
-            // 域扭曲：让岛屿边缘不规则（避免标准圆形）
-            double warp = r * 0.35;
-            double wx = x + (valueNoise(x, z, 90, 1001) - 0.5) * 2.0 * warp;
-            double wz = z + (valueNoise(x, z, 90, 1002) - 0.5) * 2.0 * warp;
-            double d = Math.sqrt((wx - ox) * (wx - ox) + (wz - oz) * (wz - oz)) / r;
-            double e = 1.0 - Mth.smoothstep(Mth.clamp(d, 0.0, 1.0));
-            return -0.90 + 1.50 * e;
+        long cx0 = Mth.lfloor(x / cfg.grid());
+        long cz0 = Mth.lfloor(z / cfg.grid());
+        // 遍历 3×3 邻域格子取最强岛值：岛中心可偏移 ±0.60 格漂进相邻格，
+        // 且远海岛半径可超 1 格——若只检查自身格子，漂进相邻格的部分会被"切除"成方块状缺口。
+        // 岛中心最多落在检查点所在格的 ±1 格范围内，3×3 邻域必然覆盖。
+        double best = -0.90; // 深海基线
+        if (effectiveChance > 0.0) {
+            for (long dxx = -1; dxx <= 1; dxx++) {
+                for (long dzz = -1; dzz <= 1; dzz++) {
+                    long ccx = cx0 + dxx;
+                    long ccz = cz0 + dzz;
+                    if (hash(ccx, ccz, 303) >= effectiveChance) {
+                        continue; // 该格不生成岛
+                    }
+                    // 岛中心偏移 ±0.60 格（≈±240 格）→ 可漂进相邻格子，打破规整方格感
+                    double ox = (ccx + 0.5 + (hash(ccx, ccz, 404) - 0.5) * 1.2) * cfg.grid();
+                    double oz = (ccz + 0.5 + (hash(ccx, ccz, 505) - 0.5) * 1.2) * cfg.grid();
+                    double r = cfg.grid() * (0.38 + 0.18 * hash(ccx, ccz, 606)) * radiusScale;
+                    // 域扭曲：让岛屿边缘不规则（避免标准圆形）
+                    double warp = r * 0.35;
+                    double wx = x + (valueNoise(x, z, 90, 1001) - 0.5) * 2.0 * warp;
+                    double wz = z + (valueNoise(x, z, 90, 1002) - 0.5) * 2.0 * warp;
+                    double ddx = wx - ox;
+                    double ddz = wz - oz;
+                    double rr = ddx * ddx + ddz * ddz;
+                    if (rr < r * r) { // 快速排除（d<1），避免 sqrt
+                        double d = Math.sqrt(rr) / r;
+                        double e = 1.0 - Mth.smoothstep((float) Mth.clamp(d, 0.0, 1.0));
+                        double v = -0.90 + 1.50 * e;
+                        if (v > best) {
+                            best = v;
+                        }
+                    }
+                }
+            }
         }
-        return -0.90;
+        return best;
     }
 
     /** 该位置所属的岛屿网格单元坐标 */
@@ -595,26 +712,11 @@ public final class ContinentIslandField {
         for (int i = 0; i < LAKE_COUNT; i++) {
             double v = lakeValueAt(i, x, z, cfg);
             if (!Double.isNaN(v)) {
-                if (Double.isNaN(best)) {
-                    best = v;
-                } else {
-                    // 若同时命中多个湖（理论不重叠），取更接近湖心的那个
-                    double dc = distToLake(i, x, z, cfg);
-                    double db = 0.0;
-                    // 简单处理：取绝对值更大的（更接近岛屿中心或水面核心）
-                    best = Math.abs(v) >= Math.abs(best) ? v : best;
-                }
+                // 理论三个湖不重叠；若同时命中，取绝对值更大的（更接近水面核心或岛屿中心）
+                best = Double.isNaN(best) ? v : (Math.abs(v) >= Math.abs(best) ? v : best);
             }
         }
         return best;
-    }
-
-    private static double distToLake(int idx, double x, double z, Config cfg) {
-        double lcx = lakeCenterX(idx);
-        double lcz = lakeCenterZ(idx);
-        double dx = (x - lcx) / lakeRadiusActual[idx];
-        double dz = (z - lcz) / lakeRadiusActual[idx];
-        return Math.sqrt(dx * dx + dz * dz);
     }
 
     public static double lakeValueAt(int idx, double x, double z, Config cfg) {
@@ -659,19 +761,23 @@ public final class ContinentIslandField {
             return -0.9;
         }
 
-        // 群系湖：极少量小岛（cell 更大、概率更低、岛更小——平均 0~1 个岛，比岛湖少得多）
-        double cell = lr * 0.66;
-        long cx = Mth.lfloor(x / cell);
-        long cz = Mth.lfloor(z / cell);
-        if (hash(cx, cz, 909) < 0.18) {
-            double ox = (cx + 0.5 + (hash(cx, cz, 404) - 0.5) * 0.4) * cell;
-            double oz = (cz + 0.5 + (hash(cx, cz, 505) - 0.5) * 0.4) * cell;
-            double ocx = (ox - lcx) / lr;
-            double ocz = (oz - lcz) / lr;
-            if (ocx * ocx + ocz * ocz < 0.64) {
-                double r = cell * 0.36;
-                double d = Math.sqrt((x - ox) * (x - ox) + (z - oz) * (z - oz)) / r;
-                double e = 1.0 - Mth.smoothstep((float) Mth.clamp(d, 0.0, 1.0));
+        // 群系湖：极少量小岛（平均 0~1 个）。湖本身是圆形湖面，
+        // 小岛改用"极坐标散点"生成（不再用方形格网）：
+        // 以湖心为原点，由种子确定性决定 0~2 个候选岛（角度/半径/大小），每个岛是平滑圆斑。
+        // 彻底消除格网直线边界（不再有"十字分割/方形斑块/域扭曲漂移"），湖面保持天然圆形；
+        // 岛外一律回落水域值 -0.35（保持湖面全域水域，压低依赖基础 offset 自然形成深水）
+        long hcx = Mth.lfloor(lcx);
+        long hcz = Mth.lfloor(lcz);
+        int isleCount = hash(hcx, hcz, 909) < 0.18 ? 1 + (hash(hcx, hcz, 910) < 0.35 ? 1 : 0) : 0;
+        for (int k = 0; k < isleCount; k++) {
+            double ang = hash(hcx, hcz, 911 + k) * Math.PI * 2.0;
+            double rr = 0.10 + hash(hcx, hcz, 921 + k) * 0.55;          // 岛心半径 0.10~0.65 lr，不贴岸
+            double ox = lcx + Math.cos(ang) * rr * lr;
+            double oz = lcz + Math.sin(ang) * rr * lr;
+            double isleR = lr * (0.12 + hash(hcx, hcz, 931 + k) * 0.10); // 岛半径 0.12~0.22 lr
+            double d = Math.sqrt((x - ox) * (x - ox) + (z - oz) * (z - oz)) / isleR;
+            if (d < 1.0) {
+                double e = 1.0 - Mth.smoothstep((float) d);
                 return -0.30 + 0.55 * e;
             }
         }
@@ -784,54 +890,67 @@ public final class ContinentIslandField {
     }
 
     /**
-     * 群岛扇区强度 mask（0~1）：锥形扇区 + 向四周蔓延侵蚀。
+     * 群岛扇区强度 mask（0~1）：纯几何锥形扇区，无噪声扭曲、无蔓延侵蚀。
      * <p>
-     * 在通用锥形扇区基础上做小幅域扭曲（±15 格，尺度 80）——边界像真实海岸一样
-     * 微弯锯齿，而不是大幅侵蚀。再叠加一层大尺度噪声做局部阈值（0.30~0.60），
-     * 边缘自然蔓延，保持扇区整体形状。
+     * 用户要求：内海不向任何方向侵蚀陆地。因此 mask 严格按扇区中心角 ± 半宽 的
+     * 纯数学锥形返回，不做坐标扭曲、不做阈值蔓延，边界是一条笔直的切割线。
      */
     public static double islandSectorMask(double x, double z, Config cfg) {
-        // 小幅域扭曲：±15 格边界锯齿（真实海岸微弯）
-        double wx = x + (valueNoise(x, z, 80, 5401) - 0.5) * 2.0 * 15.0;
-        double wz = z + (valueNoise(x, z, 80, 5402) - 0.5) * 2.0 * 15.0;
-        double base = sectorMask(ISLAND_SECTOR, wx, wz, cfg);
+        double base = sectorMask(ISLAND_SECTOR, x, z, cfg);
         if (base <= 0.0) {
             return 0.0;
         }
-        // 温和蔓延侵蚀：阈值 0.30~0.60，边缘自然过渡不碎裂
-        double n = valueNoise(x, z, 520, 5300);
-        double thresh = 0.30 + 0.30 * n;
-        return Mth.clamp((base - thresh) / (1.0 - thresh), 0.0, 1.0);
+        // 纯几何，不做任何蔓延/侵蚀：直接返回 base 本身的平滑锥形
+        return base;
     }
 
     /**
-     * 群岛扇区外溢场（0~1）：与 {@link #islandSectorMask} 同源，但角度/径向窗口更宽，
-     * 扇区边界之外仍有一段平滑衰减的非零值（外溢带）。
-     * 用于让群岛的低地/浅海影响范围向外延伸——bias 与 IslandLowland 依据它把
-     * 扇区边缘外侧的地形压成海平面齐平的滩涂，而不是硬切换回大陆基盘高地。
+     * 群岛扇区实际半宽（弧度）：普通扇区半宽 + 群岛专用扩展量。
+     * 内海/小岛/压低带/湿地带的全部群岛角度判定共用此值——只扩大群岛扇区，其他扇区仍用 {@link #sectorHalfWidthDeg}。
+     */
+    public static double islandSectorHalfRad() {
+        return Math.toRadians(sectorHalfWidthDeg + islandSectorHalfExtraDeg);
+    }
+
+    /**
+     * 群岛扇区角度掩码（0~1）：纯角度域硬窗口，无任何噪声扭曲、不外溢到相邻扇区。
+     * <p>
+     * 角度范围：[half*0.95, half*1.00] 是 5% 半宽的极窄 smoothstep 过渡（只做数值
+     * 平滑避免绝对硬边产生跳变），超出 half*1.00 立即归零 → 保证压低带、湿地带、
+     * 群系判定绝不会泄漏到群岛扇区两侧的相邻大陆。half 使用 {@link #islandSectorHalfRad()}（含扩展）。
+     */
+    public static double islandSectorAngMask(double x, double z) {
+        double angle = Math.atan2(z, x);
+        double center = sectorCenterAngle(ISLAND_SECTOR);
+        double angOff = angle - center;
+        double delta = Math.abs(Math.atan2(Math.sin(angOff), Math.cos(angOff)));
+        double half = islandSectorHalfRad();
+        double inner = half * 0.95;   // 内侧起点：离边界还有 5% 半宽
+        double outer = half * 1.00;   // 外侧截止：严格等于扇区半宽，不外溢
+        return 1.0 - Mth.smoothstep((float) Mth.clamp((delta - inner) / (outer - inner), 0.0, 1.0));
+    }
+
+    /**
+     * 群岛扇区 falloff 场（0~1）：纯几何，角度不溢出、径向仅在环带内非零。
+     * <p>
+     * 用户要求：彻底禁止内海对两侧陆地的侵蚀。因此本函数移除所有坐标扭曲与
+     * 角度向外延伸（原 loF-0.16 / hiF+0.16 会把压低带到相邻大陆），角度域由
+     * {@link #islandSectorAngMask} 严格限制在扇区半宽范围内，径向域直接使用
+     * sectorDistLo ~ sectorDistHi，不向内、不向外做额外扩展。
      */
     public static double islandSectorFalloff(double x, double z, Config cfg) {
-        double wx = x + (valueNoise(x, z, 80, 5401) - 0.5) * 2.0 * 15.0;
-        double wz = z + (valueNoise(x, z, 80, 5402) - 0.5) * 2.0 * 15.0;
-        double angle = Math.atan2(wz, wx);
-        double center = sectorCenterAngle(ISLAND_SECTOR);
-        double warpBig = (valueNoise(wx, wz, 380, 5100 + ISLAND_SECTOR * 17) - 0.5) * 2.0 * 0.17;
-        double warpSmall = (valueNoise(wx, wz, 110, 5200 + ISLAND_SECTOR * 13) - 0.5) * 2.0 * 0.05;
-        double angOff = angle + warpBig + warpSmall - center;
-        double delta = Math.abs(Math.atan2(Math.sin(angOff), Math.cos(angOff)));
-        double half = Math.toRadians(sectorHalfWidthDeg);
-        double inner = half * 0.75;
-        double outer = half * 1.65; // 比 islandSectorMask 的 1.55 略宽 → 窄外溢带（约 0.1 半宽 ≈ 十几~几十格）
-        double angMask = 1.0 - Mth.smoothstep((float) Mth.clamp((delta - inner) / (outer - inner), 0.0, 1.0));
+        double angMask = islandSectorAngMask(x, z);
         if (angMask <= 0.0) {
             return 0.0;
         }
         double R = cfg.radius();
         double lo = R * sectorDistLo;
         double hi = R * sectorDistHi;
-        double loF = R * Math.max(0.0, sectorDistLo - 0.16);
-        double hiF = R * Math.min(1.0, sectorDistHi + 0.16);
-        double dist = Math.sqrt(wx * wx + wz * wz);
+        // 纯几何径向窗口：严格在 sectorDistLo ~ sectorDistHi 之间
+        // 每端用 sectorDist * 0.04 宽度做 smoothstep 过渡，避免数值跳变
+        double loF = R * Math.max(0.0, sectorDistLo - 0.04);
+        double hiF = R * Math.min(1.0, sectorDistHi + 0.04);
+        double dist = Math.sqrt((double) x * x + (double) z * z);
         double radMask;
         if (dist <= loF || dist >= hiF) {
             radMask = 0.0;
@@ -879,6 +998,72 @@ public final class ContinentIslandField {
     public static double sectorMask(int sector, double x, double z, double radius) {
         return sectorMask(sector, x, z, new Config((int) radius, 600, 400, 0.22));
     }
+
+    /** 供密度函数侧调用的重载（只关心大陆半径；Config 中除 radius 外其余字段对群岛判定无影响） */
+    public static double islandSectorMask(double x, double z, double radius) {
+        return islandSectorMask(x, z, new Config((int) radius, 600, 400, 0.22));
+    }
+
+    /** 供密度函数侧调用的重载（只关心大陆半径；Config 中除 radius 外其余字段对群岛判定无影响） */
+    public static double islandSectorFalloff(double x, double z, double radius) {
+        return islandSectorFalloff(x, z, new Config((int) radius, 600, 400, 0.22));
+    }
+
+    /**
+     * 群岛-环山带过渡湿地浅滩带（0~1）：径向 0.80R~0.98R 环带 × 群岛扇区角度掩码。
+     * 群系源与地形侧 {@link ArchipelagoWetland} 共用同一判定，保证"地形见水"与
+     * "群系为沼泽/红树林"永远对齐。
+     * <p>
+     * 边界形态：
+     * <ul>
+     *   <li>内缘（靠内海侧）：大幅噪声扭曲（±0.045R）且只向外弯——湿地带向内海方向
+     *       伸出海湾/岬角，不向内收缩，形成犬牙交错的自然岸线</li>
+     *   <li>外缘（靠环山带侧）：仅小幅扭曲（±0.015R），保持贴环山带墙脚的平顺衔接</li>
+     *   <li>角度域：乘 {@link #islandSectorAngMask}，湿地带只在群岛扇区（扇区 2）出现，
+     *       与地形侧 ArchipelagoWetland 的角度限制完全一致</li>
+     * </ul>
+     */
+    public static double archipelagoWetlandBand(double x, double z, double radius) {
+        double dist = Math.sqrt(x * x + z * z);
+        // 内缘大幅扭曲且只向外（内海方向）延伸；外缘小幅扭曲保持贴环山带
+        double warpIn = Math.min(0.0, (valueNoise(x, z, 280, 9200) - 0.5) * 2.0 * radius * 0.045);
+        double warpOut = (valueNoise(x, z, 220, 9201) - 0.5) * 2.0 * radius * 0.015;
+        double detIn = Math.min(0.0, (valueNoise(x, z, 60, 9202) - 0.5) * 2.0 * radius * 0.008);
+        double detOut = (valueNoise(x, z, 80, 9203) - 0.5) * 2.0 * radius * 0.005;
+        double lo = radius * 0.80 + warpIn + detIn;
+        double hi = radius * 0.98 + warpOut + detOut;
+        // 窄过渡带：主体区域 band≈1.0，仅边界平滑衰减（内缘 ~42 格、外缘 ~34 格）
+        double inEdge = radius * 0.010;
+        double outEdge = radius * 0.008;
+        double band;
+        if (dist <= lo - inEdge || dist >= hi + outEdge) {
+            return 0.0;
+        }
+        if (dist < lo) {
+            band = Mth.smoothstep((float) ((dist - (lo - inEdge)) / inEdge));
+        } else if (dist > hi) {
+            band = 1.0 - Mth.smoothstep((float) ((dist - hi) / outEdge));
+        } else {
+            band = 1.0;
+        }
+        // 群岛扇区角度限制：与 ArchipelagoWetland 地形侧共用 islandSectorAngMask，群系/地形严格对齐
+        double angMask = islandSectorAngMask(x, z);
+        if (angMask <= 0.0) {
+            return 0.0;
+        }
+        // 【两侧收窄】用户要求"缩两侧"（角度方向）而非"前后"（径向），径向环带 0.80R~0.98R 保持不变。
+        // 湿地带只在扇区中部满强度，向两侧（角度边界方向）提前衰减：half*0.80（16°）内满，
+        // half*0.80~half*0.95（16°~19°）渐入为 0，两侧再往外走一点点但不到 20°。
+        double angle = Math.atan2(z, x);
+        double center = sectorCenterAngle(ISLAND_SECTOR);
+        double delta = Math.abs(Math.atan2(Math.sin(angle - center), Math.cos(angle - center)));
+        double half = islandSectorHalfRad(); // 含群岛专用扩展，湿地带跟随群岛扇区向两侧扩大
+        double sideIn = half * 0.80;
+        double sideOut = half * 0.95;
+        double sideFade = 1.0 - Mth.smoothstep((float) Mth.clamp((delta - sideIn) / (sideOut - sideIn), 0.0, 1.0));
+        return band * angMask * sideFade;
+    }
+
 
     /**
      * 山脉扇区（扇区 0）的结构值（≥0）：群系源与 {@code MountainSector} 共用，保证群系与地形完全对齐。
@@ -958,7 +1143,8 @@ public final class ContinentIslandField {
     /**
      * 群岛扇区的大陆度：小岛为陆地、岛间为深海（内海）。
      * 岛屿为中等大小（102~162 格），带中等域扭曲（warp 0.55r，双频噪声）——
-     * 形状完整不规则、边缘不破碎；55% 单元格概率 + 半径相对 cell 偏小 → 群岛密集、水岛相间。
+     * 形状完整不规则、边缘不破碎；35% 单元格概率 + 岛心偏移 ±0.40 格（≈±120 格）
+     * → 岛心偏离格子中心，弱化规整方格感，水岛相间。
      */
     public static double islandSectorValue(double x, double z) {
         // 海洋神殿保留区：强制深海（-0.9），清除区域内所有岛屿，保证神殿周围干净
@@ -966,24 +1152,42 @@ public final class ContinentIslandField {
             return -0.9;
         }
         double cell = 300.0;
-        long cx = Mth.lfloor(x / cell);
-        long cz = Mth.lfloor(z / cell);
-        // 必生成的蘑菇岛单元格强制为岛
-        if (hash(cx, cz, 909) < 0.55 || (cx == mushroomCellX && cz == mushroomCellZ)) {
-            double ox = (cx + 0.5 + (hash(cx, cz, 404) - 0.5) * 0.34) * cell;
-            double oz = (cz + 0.5 + (hash(cx, cz, 505) - 0.5) * 0.34) * cell;
-            double r = cell * (0.34 + 0.20 * hash(cx, cz, 606));
-            // 域扭曲（双频噪声叠加）：让岛屿边缘不规则但整体形状完整，避免破碎成碎块
-            double warp = r * 0.55;
-            double wx = x + (valueNoise(x, z, 90, 1001) - 0.5) * 2.0 * warp
-                          + (valueNoise(x, z, 36, 1003) - 0.5) * 1.4 * warp;
-            double wz = z + (valueNoise(x, z, 90, 1002) - 0.5) * 2.0 * warp
-                          + (valueNoise(x, z, 36, 1004) - 0.5) * 1.4 * warp;
-            double d = Math.sqrt((wx - ox) * (wx - ox) + (wz - oz) * (wz - oz)) / r;
-            double e = 1.0 - Mth.smoothstep((float) Mth.clamp(d, 0.0, 1.0));
-            return -0.55 + 0.85 * e; // 中心约 0.30（陆地），边缘滑向深海
+        long cx0 = Mth.lfloor(x / cell);
+        long cz0 = Mth.lfloor(z / cell);
+        // 【3×3 邻域搜索】岛心偏移 ±0.40 格（≈±120 格）+ 半径最大 0.54 格（≈162 格），
+        // 岛身会越出本格最多约 130 格；若只查当前格，越界的岛身会被"切除"成方块缺口。
+        // 岛心最多落在检查点所在格的 ±1 格范围内，3×3 邻域必然覆盖——
+        // 与外海岛屿（bias 外围 3×3）及 innerIslandOwner 的几何完全一致，地形/群系统一。
+        double best = -0.78; // 岛间深海基线
+        for (long dxx = -1; dxx <= 1; dxx++) {
+            for (long dzz = -1; dzz <= 1; dzz++) {
+                long ccx = cx0 + dxx;
+                long ccz = cz0 + dzz;
+                // 群岛概率 0.35：水岛相间较稀疏（蘑菇岛格强制生成）
+                if (!(hash(ccx, ccz, 909) < 0.35 || (ccx == mushroomCellX && ccz == mushroomCellZ))) {
+                    continue;
+                }
+                // 岛中心偏移 ±0.40 格（≈±120 格），偏离格心但基本留在本格
+                double ox = (ccx + 0.5 + (hash(ccx, ccz, 404) - 0.5) * 0.8) * cell;
+                double oz = (ccz + 0.5 + (hash(ccx, ccz, 505) - 0.5) * 0.8) * cell;
+                double r = cell * (0.34 + 0.20 * hash(ccx, ccz, 606));
+                // 域扭曲（双频噪声叠加）：让岛屿边缘不规则但整体形状完整，避免破碎成碎块
+                double warp = r * 0.55;
+                double wx = x + (valueNoise(x, z, 90, 1001) - 0.5) * 2.0 * warp
+                              + (valueNoise(x, z, 36, 1003) - 0.5) * 1.4 * warp;
+                double wz = z + (valueNoise(x, z, 90, 1002) - 0.5) * 2.0 * warp
+                              + (valueNoise(x, z, 36, 1004) - 0.5) * 1.4 * warp;
+                double d = Math.sqrt((wx - ox) * (wx - ox) + (wz - oz) * (wz - oz)) / r;
+                if (d < 1.0) {
+                    double e = 1.0 - Mth.smoothstep((float) Mth.clamp(d, 0.0, 1.0));
+                    double v = -0.55 + 0.85 * e; // 中心约 0.30（陆地），边缘滑向深海
+                    if (v > best) {
+                        best = v;
+                    }
+                }
+            }
         }
-        return -0.78; // 岛间深海
+        return best;
     }
 
     /** 群岛扇区该位置是否为小岛陆地（与 {@link #islandSectorValue} 的陆地阈值完全一致） */
@@ -1022,5 +1226,124 @@ public final class ContinentIslandField {
         h = (h ^ (h >>> 16)) * 0x45d9f3bL;
         h ^= h >>> 16;
         return (h & 0x7fffffffL) / (double) 0x7fffffffL;
+    }
+    /** 内海群岛小岛所有者格（与 {@link #islandSectorValue} 完全一致的几何判定）。
+     *  返回命中岛的所属格 [cx, cz]；若未命中任何小岛，返回当前格 [lfloor(x/300), lfloor(z/300)]。
+     *  <p>目的：岛心可偏移 ±0.40 格（≈±120 格），同一岛屿可能横跨 2~3 个网格单元；
+     *  若直接按当前格哈希取群系，同一岛会被切割成多群系拼贴（用户图四现象）。
+     *  通过 3×3 邻域搜索「真正生成该岛的格子」保证一岛一哈希一生物群系。 */
+    public static long[] innerIslandOwner(double x, double z) {
+        double cell = 300.0;
+        long cx0 = Mth.lfloor(x / cell);
+        long cz0 = Mth.lfloor(z / cell);
+        long ownerCx = cx0;
+        long ownerCz = cz0;
+        double bestValue = -1.0;
+        for (long dxx = -1; dxx <= 1; dxx++) {
+            for (long dzz = -1; dzz <= 1; dzz++) {
+                long ccx = cx0 + dxx;
+                long ccz = cz0 + dzz;
+                if (!(hash(ccx, ccz, 909) < 0.35 || (ccx == mushroomCellX && ccz == mushroomCellZ))) {
+                    continue;
+                }
+                double ox = (ccx + 0.5 + (hash(ccx, ccz, 404) - 0.5) * 0.8) * cell;
+                double oz = (ccz + 0.5 + (hash(ccx, ccz, 505) - 0.5) * 0.8) * cell;
+                double r = cell * (0.34 + 0.20 * hash(ccx, ccz, 606));
+                double warp = r * 0.55;
+                double wx = x + (valueNoise(x, z, 90, 1001) - 0.5) * 2.0 * warp
+                                + (valueNoise(x, z, 36, 1003) - 0.5) * 1.4 * warp;
+                double wz = z + (valueNoise(x, z, 90, 1002) - 0.5) * 2.0 * warp
+                                + (valueNoise(x, z, 36, 1004) - 0.5) * 1.4 * warp;
+                double d = Math.sqrt((wx - ox) * (wx - ox) + (wz - oz) * (wz - oz)) / r;
+                if (d < 1.0) {
+                    double e = 1.0 - Mth.smoothstep((float) Mth.clamp(d, 0.0, 1.0));
+                    double val = -0.55 + 0.85 * e;
+                    if (val > bestValue) {
+                        bestValue = val;
+                        ownerCx = ccx;
+                        ownerCz = ccz;
+                    }
+                }
+            }
+        }
+        return new long[]{ownerCx, ownerCz};
+    }
+
+    /** 外海岛屿所有者格（与 bias() 外围岛屿生成的「best-value」准则完全一致）。
+     *  返回命中岛的所属格 [cx, cz]；若未命中，返回当前格。与 {@link #innerIslandOwner} 同理：
+     *  岛心偏移 ±0.60 格 + 半径 0.38~0.56grid 会让同一岛屿跨越多个网格单元，必须统一所有者哈希。 */
+    public static long[] farIslandOwner(double x, double z, Config cfg) {
+        double dist = Math.sqrt(x * x + z * z);
+        double baseChance = cfg.islandChance();
+        double radiusScale = 1.0;
+        if (dist >= cfg.radius() * farIslandStartMul) {
+            baseChance *= farIslandMul;
+            radiusScale = 0.85 + 0.40 * farIslandMul;
+        }
+        double effectiveChance = Mth.clamp(baseChance, 0.0, 1.0);
+        long cx0 = cellX(x, cfg);
+        long cz0 = cellZ(z, cfg);
+        long ownerCx = cx0;
+        long ownerCz = cz0;
+        double bestValue = -2.0;
+        double g = cfg.grid();
+        if (effectiveChance > 0.0) {
+            for (long dxx = -1; dxx <= 1; dxx++) {
+                for (long dzz = -1; dzz <= 1; dzz++) {
+                    long ccx = cx0 + dxx;
+                    long ccz = cz0 + dzz;
+                    if (hash(ccx, ccz, 303) >= effectiveChance) continue;
+                    double ox = (ccx + 0.5 + (hash(ccx, ccz, 404) - 0.5) * 1.2) * g;
+                    double oz = (ccz + 0.5 + (hash(ccx, ccz, 505) - 0.5) * 1.2) * g;
+                    double r = g * (0.38 + 0.18 * hash(ccx, ccz, 606)) * radiusScale;
+                    double warp = r * 0.35;
+                    double wx = x + (valueNoise(x, z, 90, 1001) - 0.5) * 2.0 * warp;
+                    double wz = z + (valueNoise(x, z, 90, 1002) - 0.5) * 2.0 * warp;
+                    double rr = (wx - ox) * (wx - ox) + (wz - oz) * (wz - oz);
+                    if (rr < r * r) {
+                        double d = Math.sqrt(rr) / r;
+                        double e = 1.0 - Mth.smoothstep((float) Mth.clamp(d, 0.0, 1.0));
+                        double v = -0.90 + 1.50 * e;
+                        if (v > bestValue) {
+                            bestValue = v;
+                            ownerCx = ccx;
+                            ownerCz = ccz;
+                        }
+                    }
+                }
+            }
+        }
+        return new long[]{ownerCx, ownerCz};
+    }
+
+    /** 该位置是否命中外海岛屿陆地几何（所有者格搜索，与 bias 外围岛屿 best-value 一致）。
+     *  作用：即使 dist < radius+transition（海岸带），若点已落入外海岛屿几何，仍按外海岛判定。 */
+    public static boolean isOuterIslandLand(double x, double z, Config cfg) {
+        long[] owner = farIslandOwner(x, z, cfg);
+        long ocx = owner[0];
+        long ocz = owner[1];
+        double dist = Math.sqrt(x * x + z * z);
+        double baseChance = cfg.islandChance();
+        double radiusScale = 1.0;
+        if (dist >= cfg.radius() * farIslandStartMul) {
+            baseChance *= farIslandMul;
+            radiusScale = 0.85 + 0.40 * farIslandMul;
+        }
+        double eff = Mth.clamp(baseChance, 0.0, 1.0);
+        if (eff <= 0.0) return false;
+        if (hash(ocx, ocz, 303) >= eff) return false;
+        double g = cfg.grid();
+        double ox = (ocx + 0.5 + (hash(ocx, ocz, 404) - 0.5) * 1.2) * g;
+        double oz = (ocz + 0.5 + (hash(ocx, ocz, 505) - 0.5) * 1.2) * g;
+        double r = g * (0.38 + 0.18 * hash(ocx, ocz, 606)) * radiusScale;
+        double warp = r * 0.35;
+        double wx = x + (valueNoise(x, z, 90, 1001) - 0.5) * 2.0 * warp;
+        double wz = z + (valueNoise(x, z, 90, 1002) - 0.5) * 2.0 * warp;
+        double rr = (wx - ox) * (wx - ox) + (wz - oz) * (wz - oz);
+        if (rr >= r * r) return false;
+        double d = Math.sqrt(rr) / r;
+        double e = 1.0 - Mth.smoothstep((float) Mth.clamp(d, 0.0, 1.0));
+        double v = -0.90 + 1.50 * e;
+        return v >= LAND_BIAS_THRESHOLD;
     }
 }

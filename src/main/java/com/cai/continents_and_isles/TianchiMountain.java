@@ -18,6 +18,7 @@ public class TianchiMountain implements DensityFunction.SimpleFunction {
 
     @Override
     public double compute(DensityFunction.FunctionContext context) {
+        ContinentIslandField.ensureConfigLoaded();
         if (!ContinentIslandField.lakeTianchi[1]) {
             return 0.0;
         }

@@ -33,6 +33,7 @@ public class LakeBasin implements DensityFunction.SimpleFunction {
 
     @Override
     public double compute(DensityFunction.FunctionContext context) {
+        ContinentIslandField.ensureConfigLoaded();
         int x = context.blockX();
         int z = context.blockZ();
         double best = 0.0;

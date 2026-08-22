@@ -10,7 +10,7 @@ import net.minecraft.world.level.levelgen.DensityFunction;
 /**
  * 山峰扇区掩码：与 {@link ContinentsAndIslesBiomeSource} 使用同一扇区判定
  * （扇区 0，中心角 -150°，半宽 20°，径向 0.30R~0.955R 直达环山带），
- * 扇区内返回 0.30~1.0（WiFi 弧线结构：峡谷底 ≈0.30、外弧低、内弧高）、边缘平滑衰减到 0.0。
+ * 扇区内返回 0.30~1.0（蜿蜒弧线结构：峡谷底 ≈0.30、外弧低、内弧高）、边缘平滑衰减到 0.0。
  * <p>
  * 扇区整体方位由世界种子随机旋转（与群系源共用 {@link ContinentIslandField#sectorRotation()}），
  * 供 offset / jaggedness 密度函数抬升山峰区地形高度，
@@ -29,8 +29,9 @@ public class MountainSector implements DensityFunction.SimpleFunction {
     private final int radius;
 
     public MountainSector(int radius) {
-        // 用配置值覆盖 JSON 参数（JSON 中的值仅为占位）
-        this.radius = CAIConfig.RADIUS.get();
+        // JSON 中的 radius 是注册期静态占位，注册期早于配置加载，
+        // 不能读 CAIConfig。compute() 用 ContinentIslandField.continentRadius。
+        this.radius = radius; // 仅满足 codec getter，compute 中不用
     }
 
     public int radius() {
@@ -39,11 +40,13 @@ public class MountainSector implements DensityFunction.SimpleFunction {
 
     @Override
     public double compute(DensityFunction.FunctionContext context) {
+        ContinentIslandField.ensureConfigLoaded();
         double x = context.blockX();
         double z = context.blockZ();
+        double R = ContinentIslandField.continentRadius;
 
         // 与群系源共用同一山脉结构函数（蜿蜒 mask + 峰谷结构），保证地形抬升与山脉群系完全一致
-        double mask = ContinentIslandField.mountainValue(x, z, this.radius);
+        double mask = ContinentIslandField.mountainValue(x, z, R);
         if (mask <= 0.0) {
             return 0.0;
         }

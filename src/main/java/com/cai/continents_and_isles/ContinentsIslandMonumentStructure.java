@@ -26,8 +26,8 @@ import java.util.Optional;
  *   <li>{@link #findGenerationPoint} 只接受"恰好等于保留区中心 chunk"的候选点，其余返回 empty</li>
  *   <li>中心点做与原版一致的深海群系检查（{@link BiomeTags#REQUIRED_OCEAN_MONUMENT_SURROUNDING}）</li>
  * </ul>
- * 保留区地形由 {@link ContinentIslandField} 保证：半径 260 格内无岛屿、深海，群系为 deep ocean，
- * 因此神殿必定且仅生成一处，且周围没有岛屿贴近。
+ * 保留区地形由 {@link ContinentIslandField} 保证：半径 300 格（MONUMENT_CLEAR_RADIUS）内无岛屿、深海，
+ * 群系为 deep ocean，因此神殿必定且仅生成一处，且周围没有岛屿贴近。
  */
 public class ContinentsIslandMonumentStructure extends OceanMonumentStructure {
 

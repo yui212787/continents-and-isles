@@ -26,15 +26,16 @@ public final class CAIConfig {
     public static final ModConfigSpec.DoubleValue FAR_ISLAND_CHANCE_MULTIPLIER;
 
     // ── 必生成大湖 ──
-    public static final ModConfigSpec.DoubleValue LAKE_RADIUS;
     public static final ModConfigSpec.DoubleValue LAKE_CENTER_FRACTION;
     // 三个大湖是否生成的独立开关
+    // （注意：湖半径不由配置控制——initLake 按湖型硬编码随机浮动 120~260 格）
     public static final ModConfigSpec.BooleanValue LAKE_0_ENABLED; // 东湖（岛湖）
     public static final ModConfigSpec.BooleanValue LAKE_1_ENABLED; // 山脉扇区湖（深湖+天池）
     public static final ModConfigSpec.BooleanValue LAKE_2_ENABLED; // 随机扇区湖（群系湖）
 
     // ── 固定扇区 ──
     public static final ModConfigSpec.DoubleValue SECTOR_HALF_WIDTH;
+    public static final ModConfigSpec.DoubleValue ISLAND_SECTOR_EXTRA_DEG;
     public static final ModConfigSpec.DoubleValue SECTOR_DIST_LO;
     public static final ModConfigSpec.DoubleValue SECTOR_DIST_HI;
 
@@ -98,8 +99,8 @@ public final class CAIConfig {
         GRID = BUILDER.comment("外围岛屿网格单元大小（格）")
                       .defineInRange("grid", 400, 100, 2000);
         ISLAND_CHANCE = BUILDER.comment("每个网格单元生成岛屿的概率（0~1，近海外围），",
-                                        "默认较 0.32 显著提高 → 0.45，使外岛更密集")
-                               .defineInRange("island_chance", 0.45, 0.0, 1.0);
+                                        "默认 0.35，外岛相对稀疏")
+                               .defineInRange("island_chance", 0.35, 0.0, 1.0);
         FAR_ISLAND_START_MULTIPLIER = BUILDER
             .comment("远海区起点（按超大陆半径的倍数，不含海岸过渡带）。",
                      "达到该距离后启用远海单独生成倍率。默认 2.5R ≈ 一万格之外。")
@@ -119,8 +120,6 @@ public final class CAIConfig {
         BUILDER.pop();
 
         BUILDER.push("lake");
-        LAKE_RADIUS = BUILDER.comment("必生成大湖的基础半径（格），实际每个湖会在此附近随机浮动")
-                             .defineInRange("lake_radius", 190.0, 50.0, 1000.0);
         LAKE_CENTER_FRACTION = BUILDER.comment("大湖（东湖）中心位置（占大陆半径的比例）")
                                       .defineInRange("lake_center_fraction", 0.19, 0.0, 0.5);
         LAKE_0_ENABLED = BUILDER.comment("生成东湖（固定在出生点东侧的岛湖，带大量小岛）")
@@ -146,6 +145,9 @@ public final class CAIConfig {
         ).push("sectors");
         SECTOR_HALF_WIDTH = BUILDER.comment("固定扇区半宽（度）")
                                    .defineInRange("sector_half_width", 20.0, 5.0, 30.0);
+        ISLAND_SECTOR_EXTRA_DEG = BUILDER.comment("群岛扇区额外半宽（度）：仅在群岛扇区（内海/小岛/压低带/湿地带）的角度判定上追加，" +
+                                                  "让群岛扇区向两侧扩大，其他扇区不受影响。0 表示与普通扇区等宽。")
+                                         .defineInRange("island_sector_extra_deg", 5.0, 0.0, 15.0);
         SECTOR_DIST_LO = BUILDER.comment("扇区环带内径（占大陆半径的比例）")
                                 .defineInRange("sector_dist_lo", 0.30, 0.0, 0.8);
         SECTOR_DIST_HI = BUILDER.comment("扇区环带外径（占大陆半径的比例）")
@@ -163,21 +165,19 @@ public final class CAIConfig {
                                             List.of(),
                                             o -> o instanceof Double);
 
-        // 扇区 1 丛林（雨林）：红树林/沼泽作为雨林附属群系（红树林约 10%、沼泽约 20%）
+        // 扇区 1 丛林（雨林）：纯雨林低地（沼泽/红树林已移至群岛-环山带过渡带浅滩）
         SECTOR_1_MAIN = BUILDER.comment("扇区 1（丛林/雨林）主群系")
                                .define("sector_1_main", "minecraft:jungle");
         SECTOR_1_EXTRAS = BUILDER.comment("扇区 1 附属群系列表（按资源定位符），",
-                                         "红树林与沼泽作为雨林附属群系生成")
+                                         "沼泽与红树林已迁移到群岛扇区外缘浅滩带（0.80R~0.98R）生成，不在此列出")
                                  .defineList("sector_1_extras",
                                      List.of("minecraft:sparse_jungle",
-                                             "minecraft:bamboo_jungle",
-                                             "minecraft:mangrove_swamp",
-                                             "minecraft:swamp"),
+                                             "minecraft:bamboo_jungle"),
                                      o -> o instanceof String);
         SECTOR_1_EXTRA_WEIGHTS = BUILDER.comment("扇区 1 附属群系的对应权重（数量须与 extras 一致）；",
-                                                 "默认：稀疏丛林约 10%、竹林约 4%、红树林约 10%、沼泽约 20%")
+                                                 "默认：稀疏丛林约 14%、竹林约 6%、主丛林约 80%")
                                         .defineList("sector_1_extra_weights",
-                                            List.of(0.18, 0.08, 0.18, 0.36),
+                                            List.of(0.18, 0.08),
                                             o -> o instanceof Double);
 
         // 扇区 2 群岛（专属内海/小岛逻辑，主群系仅兜底，附属群系作为小岛额外点缀）
