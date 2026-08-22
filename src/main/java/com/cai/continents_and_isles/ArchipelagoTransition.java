@@ -10,10 +10,11 @@ import org.slf4j.LoggerFactory;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 群岛扇区过渡带压低带（0~1）：覆盖群岛环带内圈（dist 0.25R~0.44R），
+ * 群岛扇区过渡带压低带（0~1）：覆盖群岛环带内圈（dist 0.25R~0.39R），
  * 配合 sloped_cheese.json 的 range_choice 在 band≥0.9 时直接用 Flat64（Y=64 平台）。
- * 两个候选取 max：距离驱动(0.25R~0.40R 全压) + falloff驱动(0~0.05渐入,0.05~1.00平坦)。
- * 径向限制 dist < 0.44R，0.44R 外保持原状（群岛/内海/左右两侧）。
+ * 径向结构：内缘渐入 0.25R~0.30R → 主体全压 0.30R~0.34R → 外缘平滑衰减 0.34R~0.39R，
+ * 0.39R 外保持原状（群岛/内海/左右两侧）。
+ * 两个候选取 max：距离驱动(主体 0.30R~0.34R) + falloff驱动(0~0.05渐入,0.05~1.00平坦)。
  */
 public class ArchipelagoTransition implements DensityFunction.SimpleFunction {
 
@@ -23,6 +24,12 @@ public class ArchipelagoTransition implements DensityFunction.SimpleFunction {
     private static final Logger LOGGER = LoggerFactory.getLogger(ArchipelagoTransition.class);
     private static final AtomicLong SAMPLES = new AtomicLong();
 
+    // 压低带径向参数（R 倍数）
+    private static final double INNER_FADE_LO = 0.25; // 内缘渐入起点
+    private static final double INNER_FADE_HI = 0.30; // 内缘渐入终点 = 主体起点
+    private static final double BODY_HI = 0.34;       // 主体全压终点 = 外缘平滑起点
+    private static final double OUTER_EDGE = 0.39;    // 外缘截止（之外 band=0）
+
     @Override
     public double compute(DensityFunction.FunctionContext context) {
         ContinentIslandField.ensureConfigLoaded();
@@ -30,20 +37,20 @@ public class ArchipelagoTransition implements DensityFunction.SimpleFunction {
         int z = context.blockZ();
         double R = ContinentIslandField.continentRadius;
         double dist = Math.sqrt((double) x * x + (double) z * z);
-        if (dist >= R * 0.44) {
-            return 0.0; // 压低区外缘 0.44R；0.44R 外恢复原地形（群岛/内海/左右两侧原状）
+        if (dist >= R * OUTER_EDGE) {
+            return 0.0; // 压低区外缘 0.39R；0.39R 外恢复原地形（群岛/内海/左右两侧原状）
         }
         double ext = ContinentIslandField.islandSectorFalloff(x, z, R);
         double angMask = ContinentIslandField.islandSectorAngMask(x, z);
 
-        // ===== 候选 1：内侧距离驱动全压带（0.25R~0.40R）=====
+        // ===== 候选 1：内侧距离驱动全压带（主体 0.30R~0.38R）=====
         // 沙滩带往中心区方向的区域也全压到与沙滩带平齐（band=angMask）。
-        // 0.25R~0.29R 加渐入过渡：band 从 0 渐变 → sloped_cheese 的 lerp 会把
+        // 0.25R~0.30R 加渐入过渡：band 从 0 渐变 → sloped_cheese 的 lerp 会把
         // 中心区原地形平滑过渡到压低区平台，内缘高度接近中心区地形，不出现陡坎。
         double inwardBand = 0.0;
-        if (dist >= R * 0.25 && dist <= R * 0.40) {
+        if (dist >= R * INNER_FADE_LO && dist <= R * BODY_HI) {
             if (angMask > 0.02) {
-                double fade = Mth.clamp((dist - R * 0.25) / (R * 0.04), 0.0, 1.0);
+                double fade = Mth.clamp((dist - R * INNER_FADE_LO) / (R * (INNER_FADE_HI - INNER_FADE_LO)), 0.0, 1.0);
                 inwardBand = angMask * Mth.smoothstep((float) fade);
             }
         }
@@ -79,6 +86,16 @@ public class ArchipelagoTransition implements DensityFunction.SimpleFunction {
         double angOut = half * 1.00;  // 渐入带外侧终点：100% 半宽（=扇区边界，band 归零）
         double angFade = 1.0 - Mth.smoothstep((float) Mth.clamp((delta - angIn) / (angOut - angIn), 0.0, 1.0));
         band *= angFade;
+
+        // ===== 径向外缘平滑衰减（0.34R~0.39R）=====
+        // 原逻辑：0.44R 处硬截止 band 从 1 突变回 0，sloped_cheese 的 lerp 直接把
+        // Flat64（缓坡已降至 48）瞬间弹回外侧原地形（浅海床≈62），产生
+        // "64→59→62" 的先降后升波形。这里在 0.34R~0.39R 之间让 band 平滑衰减到 0，
+        // Flat64 高度随 band 渐变自然过渡到外侧海床，不再突变回升。
+        if (dist > R * BODY_HI) {
+            double outerFade = 1.0 - Mth.smoothstep((float) Mth.clamp((dist - R * BODY_HI) / (R * (OUTER_EDGE - BODY_HI)), 0.0, 1.0));
+            band *= outerFade;
+        }
 
         // 【临时诊断】每 20000 次采样输出一次，实测压低区 band 值（用完删除）
         if ((SAMPLES.incrementAndGet() & 0x3FFFF) == 0) {

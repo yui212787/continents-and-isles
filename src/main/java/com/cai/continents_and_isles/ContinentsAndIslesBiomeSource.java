@@ -320,22 +320,25 @@ public class ContinentsAndIslesBiomeSource extends BiomeSource {
             double islExtHere = ContinentIslandField.islandSectorFalloff(bx, bz, cfgIsl);
             // 两侧海岸：不做任何人工干预。angMask 在群岛扇区外强制=0 → islExtHere=0，
             // 自然落入下方 pickMainlandBiome（原版大陆群系），形成标准 MC 自然海岸线。
-            if (islExtHere > 0.05) {
+            // 【沙滩带起点前移】起点 falloff 0.05 → 0.0534（对应径向 0.32R，压低带主体区），
+            // 终点 0.34 不动；沙滩带
+            // 整体落在压低带主体(0.30R~0.34R)上，不再外溢到缓坡区。
+            if (islExtHere > 0.10) {
                 if (islExtHere <= 0.34) {
-                    // ===== 沙滩带（falloff 0.05~0.34）=====
+                    // ===== 沙滩带（falloff 0.0534~0.34）=====
                     // 与 ArchipelagoTransition 的压低平坦段对齐：整个压低区域压到 Y64 浅滩，
                     // 固定 beach 群系；内海方向大幅扩展，不再有"沙-海"缓冲带与草地错位。
-                    // 【沙滩带角度收窄】只在 delta < half*0.75（15°）内强制沙滩；
-                    // 15°~20° 之间压低带角度渐入已把地形回升到大陆高度，
+                    // 【沙滩带角度窗口】只在 delta < half*0.85（17°）内强制沙滩；
+                    // 0.85~1.00 之间压低带角度渐入已把地形回升到大陆高度，
                     // 群系随之走大陆群系，保持"地形/群系"一致，避免两侧高地贴沙滩。
                     double bAngle = Math.atan2(bz, bx);
                     double bCenter = ContinentIslandField.sectorCenterAngle(ContinentIslandField.ISLAND_SECTOR);
                     double bDelta = Math.abs(Math.atan2(Math.sin(bAngle - bCenter), Math.cos(bAngle - bCenter)));
                     double bHalf = ContinentIslandField.islandSectorHalfRad(); // 含群岛专用扩展，沙滩带跟随群岛扇区向两侧扩大
-                    if (bDelta < bHalf * 0.75) {
+                    if (bDelta < bHalf * 0.85) {
                         return this.mainlandPool.get(BEACH);
                     }
-                    // 两侧收窄区（delta >= 15°）：地形已回升大陆高度，走大陆群系
+                    // 两侧收窄区（delta >= 17°）：地形已回升大陆高度，走大陆群系
                     return this.pickMainlandBiome(x, y, z, sampler);
                 }
                 // falloff > 0.34：群岛内部正常群系（小岛/内海）
